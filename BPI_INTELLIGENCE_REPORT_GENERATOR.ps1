@@ -20,7 +20,7 @@
 [PSCustomObject]$apiResponse = Invoke-RestMethod -Method Post -Uri $xmlConfig.Service_Account.Token_Endpoint -Headers $headers
 [string]$accessToken = $apiResponse.access_token
 
-## API Test
+## Run Report
 [hashtable]$headers = @{
     'Authorization' = "Bearer $accessToken"
     'Accept' = 'application/json'
