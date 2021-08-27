@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<IntelligenceReportGenerator_Config>
+	<Token_Endpoint>https://auth.{REGION}.data.vmwservices.com/oauth/token?grant_type=client_credentials</Token_Endpoint>
+	<Root_URL>https://api.{REGION}.data.vmwservices.com</Root_URL>
+	<Client_ID>{SERVICE_ACCOUNT_DISPLAY_NAME}@9527412c-****-403c-****-4b0df38e695a.data.vmwservices.com</Client_ID>
+	<Secret_Key>5571********************************************************C86F</Secret_Key>
+	<!--Define The Service Account Access Level On Shared Report. Only READ or FULL are allowed-->
+	<Account_Access_Level>READ</Account_Access_Level>
+	<!--Define The Number Of Results API Returns. Default Value is 10. Value Must Be Either 10,25,50,100-->
+	<API_Page_Size>10</API_Page_Size>
+</IntelligenceReportGenerator_Config>
