@@ -45,16 +45,9 @@
 }
 $body = $body | ConvertTo-Json -Depth 3
 [PSCustomObject]$apiResponse = Invoke-RestMethod -Method Post -Uri "$($xmlConfig.Root_URL)/v1/account/search" -Headers $headers -Body $body
-
-If ($apiResponse.data.total_count -eq 1) {
-    # API Return Only One Result, Which Is Expected
-    If ($apiResponse.data.results.user_descriptor.directory_type -eq 'SERVICE_ACCOUNT') {
-        [PSCustomObject]$targetServiceAccountDetails = $apiResponse.data.results
-    } Else {
-        Throw "An Error Occured When Validating Account Service Details Due To Directory Type Is Not A Service Account (Directory Type: $($apiResponse.data.results.user_descriptor.directory_type))."
-    }
-} Else {
-    Throw "An Error Occured When Searching Account Service Details Due To Incorrect Total Count Number Returned By Workspace ONE Intelligence (Total Count: $($apiResponse.data.total_count))."
+[array]$targetServiceAccountDetails = $apiResponse.data.results | Where-Object {($_.display_name -eq $xmlConfig.Client_ID) -and ($_.user_descriptor.directory_type -eq 'SERVICE_ACCOUNT')}
+If ($targetServiceAccountDetails.Count -ne 1) {
+    Throw "An Error Occured When Searching Account Service Details Due To Incorrect Total Count Number Returned By Workspace ONE Intelligence (Total Count: $($targetServiceAccountDetails.Count))."
 }
 
 #################################################################################
@@ -73,7 +66,7 @@ While ($confirmation -ne 'y') {
 [PSCustomObject]$body = @{
     search_terms = @(
         @{
-            value = "adobeconnect"
+            value = $reportName
             fields = @('name')
         }
     )
@@ -81,12 +74,9 @@ While ($confirmation -ne 'y') {
 # Convert Body To JSON
 $body = $body | ConvertTo-Json -Depth 3
 [PSCustomObject]$apiResponse = Invoke-RestMethod -Method Post -Uri "$($xmlConfig.Root_URL)/v2/reports/search" -Headers $headers -Body $body
-
-If ($apiResponse.data.total_count -eq 1) {
-    # API Return Only One Result, Which Is Expected
-        [PSCustomObject]$targetReportDetails = $apiResponse.data.results
-} Else {
-    Throw "An Error Occured When Searching Account Service Details Due To Incorrect Total Count Number Returned By Workspace ONE Intelligence (Total Count: $($apiResponse.data.total_count))."
+[array]$targetReportDetails = $apiResponse.data.results | Where-Object {$_.name -eq $reportName}
+If ($targetReportDetails.Count -ne 1) {
+    Throw "An Error Occured When Searching Report Details Due To Incorrect Total Count Number Returned By Workspace ONE Intelligence (Total Count: $($targetReportDetails.Count))."
 }
 
 #################################################################################
@@ -94,9 +84,9 @@ If ($apiResponse.data.total_count -eq 1) {
 ## This Is Mandatory To be Able To Run Reports                                 ##
 #################################################################################
 [PSCustomObject]$apiResponse = Invoke-RestMethod -Method Get -Uri "$($xmlConfig.Root_URL)/v1/reports/$($targetReportDetails.id)/share/accounts" -Headers $headers
-[string]$isReportSharedWithAccount = [string]::IsNullOrEmpty(($apiResponse.data.details.account_id | Where-Object {$_ -eq $($targetServiceAccountDetails.id)}))
+[bool]$isReportNotSharedWithAccount = [string]::IsNullOrEmpty(($apiResponse.data.details.account_id | Where-Object {$_ -eq $($targetServiceAccountDetails.id)}))
 
-If ($isReportSharedWithAccount) {
+If ($isReportNotSharedWithAccount) {
     # Targeted Report Is Not Shared With Targeted Service Account
     $body = ConvertTo-Json -InputObject @(
         @{
@@ -117,96 +107,53 @@ If ($isReportSharedWithAccount) {
 #################################################################################
 ## STEP 7 - Tracking Report Generation State                                   ##
 #################################################################################
-[bool]$continueToSearch = $true
-[bool]$errorOnSearch = $false
-[int]$offsetValue = 0
-[int]$pageSizeValue = $xmlConfig.API_Page_Size
+[bool]$isReportRun = $true
+[bool]$SupportShortDelay = $true
+While ($isReportRun) {
+    [bool]$continueToSearch = $true
+    [int]$offsetValue = 0
 
-
-while($continueToSearch){
-    [PSCustomObject]$body = @{
-        offset = $offsetValue
-        page_size = $pageSizeValue
+    While ($continueToSearch){
+        [PSCustomObject]$body = @{
+            offset = $offsetValue
+            page_size = $xmlConfig.API_Page_Size
+        }
+        # Convert Body To JSON
+        $body = $body | ConvertTo-Json
+        [PSCustomObject]$apiResponse = Invoke-RestMethod -Method POST -Uri "$($xmlConfig.Root_URL)/v1/reports/$($targetReportDetails.id)/downloads/search" -Headers $headers -Body $body
+        [PSCustomObject]$targetReportTrackingDetails = $apiResponse.data.results | Where-Object {$_.report_schedule_id -eq $($targetReportRequestDetails.id)}
+        If (-not [string]::IsNullOrEmpty($targetReportTrackingDetails)) {
+            # Found The Right Target Report Request Details
+            $continueToSearch = $false
+            Break
+        } Elseif ($apiResponse.data.total_count -gt ($apiResponse.data.page_size + $apiResponse.data.offset)) {
+            # Need To Read The Next Page Of Results
+            $offsetValue += $xmlConfig.API_Page_Size
+        } Else {
+            # No Results Founds
+            $continueToSearch = $false
+        }
     }
-    # Convert Body To JSON
-    $body = $body | ConvertTo-Json
-    [PSCustomObject]$apiResponse = Invoke-RestMethod -Method POST -Uri "$($xmlConfig.Root_URL)/v1/reports/$($targetReportDetails.id)/downloads/search" -Headers $headers -Body $body
-    [PSCustomObject]$targetReportRequestDetails = $apiResponse.data.results | Where-Object {$_.report_schedule_id -eq $($targetReportRequestDetails.id)}
-    If (-not [string]::IsNullOrEmpty($targetReportRequestDetails)) {
-        # Found The Right Target Report Request Details
-        $continueToSearch = $false
-    } Elseif ($apiResponse.data.total_count -gt ($apiResponse.data.page_size + $apiResponse.data.offset)) {
-        # Need To Read The Next Page Of Results
-        $offsetValue += $pageSizeValue
+    If ($targetReportTrackingDetails) {
+        If ($targetReportTrackingDetails.status -eq 'COMPLETED') {
+            # Report Is Generated
+            $isReportRun = $false
+        } Else {
+            # Report still running
+            Start-Sleep -Seconds 15
+        }
     } Else {
-        # No Results Founds
-        $continueToSearch = $false
-        $errorOnSearch = $true
+        If ($SupportShortDelay) {
+            $SupportShortDelay = $false
+            Start-Sleep -Seconds 30
+        } Else {
+            Throw 'An Error Occured When Searching Report Completion Status. No Report Were Found'
+        }
     }
 }
 
-Write-Host $errorOnSearch
-
-<#
-#region Variables - YOU HAVE TO MODIFY THIS SECTION!
-
-#You can get authentication info creating a service account in Intelligence ( https://techzone.vmware.com/getting-started-workspace-one-intelligence-apis-workspace-one-operational-tutorial#_1107619 ). 
-
-#Set the auth endpoint according to your tenant's region
-$authEndpoint = 'https://auth.eu1.data.vmwservices.com/oauth/token?grant_type=client_credentials'
-
-#The authorization header is the clientId:clientSecret in Base64 format.
-$authHeader = @{
-    'Content-Type' = 'application/json'
-    'Authorization' = 'Basic pasteYourClientId:ClientSecretInBase64FormatHere'
-}
-#There's no need to modify the body
-$body = @{
-    "offset" = 0;
-    "page_size" = 100;
-}
-#Choose a name for your report
-$reportName = "Asset_Inventory_"
-#Where to download the report, select an already existing folder
-$downloadFolder = "C:\WS1\Reports\"
-
-#You can easily get $reportGUID from the desired report webpage URL in Intelligence, it's the GUID after "/list/" and before "/overview"
-#THIS REPORT HAS TO BE SHARED WITH YOUR SERVICE ACCOUNT IN INTELLIGENCE
-$reportGUID = "a51cac58-b7db-48b4-82f5-c46ed82fc89e"
-
-#Set these variables according to your tenant's region
-$reportingUri = "https://api.eu1.data.vmwservices.com/v1/reports/"
-$reportingDownloadUri = "https://api.eu1.data.vmwservices.com/v1/reports/tracking/"
-#endregion
-
-###### DO NOT MODIFY ANTYTHING BELOW THIS LINE ######
-#####################################################
-
-#Obtaining the access token
-$accessToken = Invoke-RestMethod -Method Post -Uri $authEndpoint -Headers $authHeader -ContentType 'application/x-www-form-urlencoded'
-
-#Building the authorization headers
-$headers = @{}
-$headers.Add("Authorization","$($accessToken.token_type) "+" "+"$($accessToken.access_token)")
-
-#Getting the report download id
-$dataUri = $reportingUri + $reportGUID + "/downloads/search"
-
-$data = Invoke-RestMethod -Method Post -Headers $headers -Uri $dataUri -Body ($body | ConvertTo-Json) -ContentType "application/json"
-
-$lastReport =  $data.data.results.GetValue(0)
-$reportId = $lastReport.id
-
-#Getting the report generation date and creating the download destination
-$reportDate = $lastReport.created_at.Substring(0,16).Replace(':','-').Replace('T','_')
-$reportFile = $downloadFolder + $reportName + $reportDate + ".csv"
-
-#Creating the report download Uri using the reportId
-$downloadUri = $reportingDownloadUri + $reportId + '/download'
-
-#Downloading the report in the specified location
-Invoke-RestMethod -Method Get -Headers $headers -Uri $downloadUri -OutFile $reportFile
-
-
-
-#>
+#################################################################################
+## STEP 8 - Download Report                                                    ##
+#################################################################################
+$reportFile = $scriptRoot + '\' + $reportName + ".csv"
+[PSCustomObject]$apiResponse = Invoke-RestMethod -Method Get -Uri "$($xmlConfig.Root_URL)/v1/reports/tracking/$($targetReportTrackingDetails.id)/download" -Headers $headers -OutFile $reportFile
