@@ -1,11 +1,23 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<IntelligenceReportGenerator_Config>
-	<Token_Endpoint>https://auth.{REGION}.data.vmwservices.com/oauth/token?grant_type=client_credentials</Token_Endpoint>
-	<Root_URL>https://api.{REGION}.data.vmwservices.com</Root_URL>
-	<Client_ID>{SERVICE_ACCOUNT_DISPLAY_NAME}@9527412c-****-403c-****-4b0df38e695a.data.vmwservices.com</Client_ID>
-	<Secret_Key>5571********************************************************C86F</Secret_Key>
-	<!--Define The Service Account Access Level On Shared Report. Only READ or FULL are allowed-->
-	<Account_Access_Level>READ</Account_Access_Level>
-	<!--Define The Number Of Results API Returns. Default Value is 10. Value Must Be Either 10,25,50,100-->
-	<API_Page_Size>10</API_Page_Size>
-</IntelligenceReportGenerator_Config>
+<WorkspaceONEAppReport_Config>
+	<UEM_Authentication>
+		<UEM_TokenEndpoint>https://{REGION}.uemauth.vmwservices.com/connect/token</UEM_TokenEndpoint>
+		<UEM_ClientID>a13ef2e*****************9e54</UEM_ClientID>
+		<UEM_SecretKey>*****7EB25A44E*********888BA62</UEM_SecretKey>
+		<UEM_RootURL>https://{UEM_TENANT}.awmdm.com</UEM_RootURL>
+	</UEM_Authentication>
+	<Intelligence_Authentication>
+		<Intelligence_TokenEndpoint>https://auth.{REGION}.data.vmwservices.com/oauth/token?grant_type=client_credentials</Intelligence_TokenEndpoint>
+		<Intelligence_ClientID>{SERVICE_ACCOUNT_DISPLAY_NAME}@9527412c-****-403c-****-4b0****e695a.data.vmwservices.com</Intelligence_ClientID>
+		<Intelligence_SecretKey>******41B33143B80*****************FEFB1791CA******F</Intelligence_SecretKey>
+		<Intelligence_RootURL>https://api.{REGION}.data.vmwservices.com</Intelligence_RootURL>
+	</Intelligence_Authentication>
+	<Tool_Config>
+		<!--Define The Service Account Access Level On Shared Report. Only READ or FULL are allowed-->
+		<Intelligence_Account_Access_Level>READ</Intelligence_Account_Access_Level>
+		<!--Define The Number Of Results API Returns. Default Value is 10. Value Must Be Either 10,25,50,100-->
+		<API_Page_Size>10</API_Page_Size>
+		<!--Define The Directory Root Where Reports are Downloded. Default is Current User Desktop-->
+		<Reports_Location>$envUserDesktop</Reports_Location>
+	</Tool_Config>
+</WorkspaceONEAppReport_Config>
