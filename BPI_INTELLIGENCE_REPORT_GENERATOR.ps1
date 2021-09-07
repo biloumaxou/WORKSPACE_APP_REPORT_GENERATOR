@@ -7,6 +7,7 @@
 [System.Collections.ArrayList]$logElements = New-Object -TypeName 'System.Collections.ArrayList'
 [string]$scriptRoot = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 [string]$wsoneAppReportConfigFile = Join-Path -Path $scriptRoot -ChildPath 'BPI_INTELLIGENCE_REPORT_GENERATOR_CONFIG.xml'
+[int]$script:arrayID = 0
 
 ## Verify If XML Configuration File Exist
 If (-not (Test-Path -Path $wsoneAppReportConfigFile -PathType Leaf)) {
@@ -50,6 +51,7 @@ Function Get-AccessToken {
 		[Parameter(Mandatory=$true)][ValidateNotNullorEmpty()][string]$ClientSecret,
         [Parameter(Mandatory=$true)][ValidateNotNullorEmpty()][string]$AccessTokenURL
 	)
+
     Try {
         [hashtable]$headers = @{
             'accept' = 'application/json'
@@ -165,14 +167,19 @@ Function Add-Message {
         [Parameter(Mandatory=$true)][ValidateNotNullOrEmpty()][string]$Message,
         [Parameter(Mandatory=$false)][ValidateNotNullOrEmpty()][string]$Color = 'Default',
         [Parameter(Mandatory=$false)][ValidateNotNullOrEmpty()][bool]$IsTempMessage = $false,
-        [Parameter(Mandatory=$false)][ValidateNotNullOrEmpty()][switch]$RemoveTempMessage
+        [Parameter(Mandatory=$false)][ValidateNotNullOrEmpty()][string]$RemoveTempMessageByGroupID,
+        [Parameter(Mandatory=$false)][switch]$RemoveAllTempMessage,
+        [Parameter(Mandatory=$false)][ValidateNotNullOrEmpty()][string]$TempMessageGroupID = 'None'
     )
 
     Try {
-        If ($RemoveTempMessage) {
-            Remove-Message
+        If ($RemoveTempMessageByGroupID) {
+            Remove-Message -GroupID $RemoveTempMessageByGroupID
+        } ElseIf ($RemoveAllTempMessage) {
+            Remove-Message -RemoveAll
         }
-        $null = $logElements.Add([pscustomobject]@{Message = $Message; Color = $Color; IsTempMessage = ($IsTempMessage -as [string])})
+        $null = $logElements.Add([pscustomobject]@{ID = ($script:arrayID -as [string]); Message = $Message; Color = $Color; IsTempMessage = ($IsTempMessage -as [string]); GroupID = $TempMessageGroupID})
+        $script:arrayID++
         Show-Message
     } Catch {
         Throw "An Error Occured When Trying To Add Message. $($_.Exception.Message)"
@@ -190,7 +197,7 @@ Function Show-Message {
         [int]$count = 0
 
         Foreach ($logElement in $logElements) {
-            $null = $count++
+            $count++
             If ($count -lt $logElements.Count ) {
                 [string]$logOutput = "$($logElement.Message)`n"
             } Else {
@@ -210,17 +217,37 @@ Function Show-Message {
 #region Function Remove-Message
 Function Remove-Message {
     [CmdletBinding()]
-    Param ()
+    Param (
+        [Parameter(Mandatory=$false)][ValidateNotNullOrEmpty()][string]$GroupID,
+        [Parameter(Mandatory=$false)][ValidateNotNullOrEmpty()][switch]$RemoveAll
+    )
 
     Try {
-        While ($logElements.IsTempMessage.IndexOf('True') -ne -1) {
-            $null = $logElements.RemoveAt($logElements.IsTempMessage.IndexOf('True'))
+        If ($RemoveAll) {
+            While ($logElements.IsTempMessage.IndexOf('True') -ne -1) {
+                $null = $logElements.RemoveAt($logElements.IsTempMessage.IndexOf('True'))
+            }
+        } ElseIf ($PSBoundParameters.ContainsKey('GroupID')) {
+            [array]$indexElements = @()
+            ForEach ($arrayElement in $logElements) {
+                If ($arrayElement.IsTempMessage -eq 'True' -and $arrayElement.GroupID -eq $GroupID) {
+                    $indexElements += $arrayElement.ID
+                }
+            }
+            If ($indexElements.Count -gt 0) {
+                ForEach ($indexElement in $indexElements) {
+                    $null = $logElements.RemoveAt($logElements.ID.IndexOf($indexElement))
+                }
+            }
+        } Else {
+            Throw 'An Error Occured When Trying To Remove Message.'
         }
     } Catch {
         Throw "An Error Occured When Trying To Remove Message. $($_.Exception.Message)"
     }
 }
 #endregion
+#region Function New-Menu
 Function New-Menu {
     [CmdletBinding()]
     Param(
@@ -228,53 +255,58 @@ Function New-Menu {
         [Parameter(Mandatory=$True)][array]$MenuOptions
     )
 
-    [int]$MaxValue = $MenuOptions.count-1
-    [int]$Selection = 0
-    [bool]$EnterPressed = $False
+    Try {
+        [int]$MaxValue = $MenuOptions.count-1
+        [int]$Selection = 0
+        [bool]$EnterPressed = $False
 
-    While(-not $EnterPressed) {
-        Add-Message -Message "$MenuTitle" -IsTempMessage $True -RemoveTempMessage
+        While(-not $EnterPressed) {
+            Add-Message -Message "$MenuTitle" -IsTempMessage $True -RemoveTempMessageByGroupID 'None'
 
-        For ($i=0; $i -le $MaxValue; $i++){
-            If ($i -eq $Selection){
-                Add-Message -Message "[ $($MenuOptions[$i]) ]" -Color 'Cyan' -IsTempMessage $True
-            } Else {
-                Add-Message -Message "  $($MenuOptions[$i])  " -IsTempMessage $True
+            For ($i=0; $i -le $MaxValue; $i++){
+                If ($i -eq $Selection){
+                    Add-Message -Message "[ $($MenuOptions[$i]) ]" -Color 'Cyan' -IsTempMessage $True
+                } Else {
+                    Add-Message -Message "  $($MenuOptions[$i])  " -IsTempMessage $True
+                }
+            }
+
+            $KeyInput = $host.ui.rawui.readkey("NoEcho,IncludeKeyDown").virtualkeycode
+
+            Switch($KeyInput){
+                13{
+                    $EnterPressed = $True
+                    Return $Selection
+                    break
+                }
+                38{
+                    If ($Selection -eq 0){
+                        $Selection = $MaxValue
+                    } Else {
+                        $Selection -= 1
+                    }
+                    Remove-Message -GroupID 'None'
+                    break
+                }
+                40{
+                    If ($Selection -eq $MaxValue){
+                        $Selection = 0
+                    } Else {
+                        $Selection +=1
+                    }
+                    Remove-Message -GroupID 'None'
+                    break
+                }
+                Default {
+                    Remove-Message -GroupID 'None'
+                }
             }
         }
-
-        $KeyInput = $host.ui.rawui.readkey("NoEcho,IncludeKeyDown").virtualkeycode
-
-        Switch($KeyInput){
-            13{
-                $EnterPressed = $True
-                Return $Selection
-                break
-            }
-            38{
-                If ($Selection -eq 0){
-                    $Selection = $MaxValue
-                } Else {
-                    $Selection -= 1
-                }
-                Remove-Message
-                break
-            }
-            40{
-                If ($Selection -eq $MaxValue){
-                    $Selection = 0
-                } Else {
-                    $Selection +=1
-                }
-                Remove-Message
-                break
-            }
-            Default {
-                Remove-Message
-            }
-        }
+    } Catch {
+        Throw "An Error Occured When Trying To Create A New Menu. $($_.Exception.Message)"
     }
 }
+#endregion
 #endregion
 ##*=============================================
 ##* END FUNCTION LISTINGS
@@ -291,26 +323,28 @@ Add-Message -Message '#########################################################'
 ################################################
 ## STEP 1: Get UEM And Intelligence Access Token
 ################################################
+Add-Message -Message "`n<-- Step 1 - Get Access Token -->"
 ## Get Workspace ONE UEM Access Token API
 Add-Message -Message 'Workspace ONE UEM Access Token Retrieval. Please Wait...' -Color 'Yellow' -IsTempMessage $true
 [string]$uemAccessToken = Get-AccessToken -ClientID $uemClientID -ClientSecret $uemSecretKey -AccessTokenURL $uemTokenEndpoint
-Add-Message -Message 'Workspace ONE UEM Access Token Retrieved' -Color 'Green' -RemoveTempMessage
+Add-Message -Message 'Workspace ONE UEM Access Token Retrieved' -Color 'Green' -RemoveAllTempMessage
 ## Get Workspace ONE Intelligence Access Token API
 Add-Message -Message 'Workspace ONE Intelligent Access Token Retrieval. Please Wait...' -Color 'Yellow' -IsTempMessage $true
 [string]$intelligenceAccessToken = Get-AccessToken -ClientID $IntelligenceClientID -ClientSecret $IntelligenceSecretKey -AccessTokenURL $IntelligenceTokenEndpoint
-Add-Message -Message 'Workspace ONE UEM Intelligent Token Retrieved' -Color 'Green' -RemoveTempMessage
+Add-Message -Message 'Workspace ONE UEM Intelligent Token Retrieved' -Color 'Green' -RemoveAllTempMessage
 
 ################################################
 ## STEP 2: Get App Name
 ################################################
+Add-Message -Message "`n<-- Step 2 - Choose Targeted App With Its Name -->"
 [string]$confirmation = '1'
 While ($confirmation -ne '0') {
     [string]$appName = $null
-    Add-Message -Message 'Please Enter An App Name For Which You Want To Generate A Report' -IsTempMessage $true -RemoveTempMessage
+    Add-Message -Message 'Please Enter An App Name For Which You Want To Generate A Report' -IsTempMessage $true -RemoveAllTempMessage
     $appName = (Read-Host).Trim()
     $confirmation = New-Menu -MenuTitle "You entered [$appName] As App Name. Is this correct ?" -MenuOptions 'Yes','No'
 }
-Add-Message -Message "You Choose To Generate A Report For [$appName] App" -Color 'Green' -RemoveTempMessage
+Add-Message -Message "You Choose To Generate A Report For App Containing [$appName] Name" -IsTempMessage $true -TempMessageGroupID 'appdetails' -RemoveAllTempMessage
 
 ################################################
 ## STEP 3: Search App Details Based On App Name
@@ -324,26 +358,29 @@ Add-Message -Message "You Choose To Generate A Report For [$appName] App" -Color
 [PSCustomObject]$uemAppDetails = Invoke-WorkspaceOneApi -RootURL $uemRootURL -BaseURL 'API/mam/apps/search' -AccessToken $uemAccessToken -Parameters $Params
 If ($uemAppDetails.Total -le 0) {
     ## No App Is Found Matching Provided App Name
-    Add-Message -Message "No App matching With [$appName] Has Been Found From Workspace ONE UEM" -Color 'Red'
+    Add-Message -Message "No App Containing [$appName] Name Has Been Found From Workspace ONE UEM" -Color 'Red'
 } Else {
     ## At Least 1 App Is Found Matching Provided App Name
-    Add-Message -Message "[$($uemAppDetails.Total)] App(s) Detected Matching With [$appName] App Name Has Been Found From Workspace ONE UEM" -Color 'Green'
+    Add-Message -Message "[$($uemAppDetails.Total)] App(s) Detected Matching With [$appName] App Name Has Been Found From Workspace ONE UEM" -IsTempMessage $true -TempMessageGroupID 'appdetails'
     [array]$options = @()
     [hashtable]$appDetails = @{}
     [int]$keyValue = 0
     ForEach ($uemAppDetail in $uemAppDetails.Application) {
         $appDetails.Add($keyValue, @{Id = $uemAppDetail.Id.Value; Uuid = $uemAppDetail.Uuid; ApplicationName = $uemAppDetail.ApplicationName; BundleId = $uemAppDetail.BundleId; AppVersion = $uemAppDetail.AppVersion})
         $null = $keyValue++
-        $options += "ApplicationName: $($uemAppDetail.ApplicationName) | Version: $($uemAppDetail.AppVersion) | ID: $($uemAppDetail.Id.Value)"
+        $options += "Application Name: $($uemAppDetail.ApplicationName) | Version: $($uemAppDetail.AppVersion) | ID: $($uemAppDetail.Id.Value)"
     }
     [int]$confirmation = New-Menu -MenuTitle "Please Select The Desired App" -MenuOptions $options
-    Add-Message -Message "You Choose To Generate A Report For [$($appDetails[$confirmation].ApplicationName)] App In Version [$($appDetails[$confirmation].AppVersion)] With ID [$($appDetails[$confirmation].Id)]" -Color 'Green' -RemoveTempMessage
+    $appName = $appDetails[$confirmation].ApplicationName
+    Add-Message -Message "You Choose To Generate A Report For [$($appDetails[$confirmation].ApplicationName)] App In Version [$($appDetails[$confirmation].AppVersion)] Identified By The ID [$($appDetails[$confirmation].Id)]" -Color 'Green' -RemoveAllTempMessage
+    Add-Message -Message "The Intelligence Report Related With [$($appDetails[$confirmation].ApplicationName)] App Will Be Named [$($appDetails[$confirmation].ApplicationName)_$($appDetails[$confirmation].Id)]" -Color 'Green' -RemoveAllTempMessage
     [string]$reportName = $null
     $reportName = "$($appDetails[$confirmation].ApplicationName)_$($appDetails[$confirmation].Id)".Replace(' ','_')
 
 ################################################
 ## STEP 4: Get Intelligence Targeted Account Service Details
 ################################################
+    Add-Message -Message "`n<-- Step 3 - Get Account Service Details -->"
     [PSCustomObject]$body = @{
         search_terms = @(
             @{
@@ -362,10 +399,12 @@ If ($uemAppDetails.Total -le 0) {
     If ($targetServiceAccountDetails.Count -ne 1) {
         Throw "An Error Occured When Searching Account Service Details Due To Incorrect Total Count Number Returned By Workspace ONE Intelligence (Total Count: $($targetServiceAccountDetails.Count))."
     }
+    Add-Message -Message "Account Service Details Are Retrived Successfully" -Color 'Green'
 
 ################################################
 ## STEP 5: Get intelligence Targeted Report Details Or Create Report
 ################################################
+    Add-Message -Message "`n<-- Step 4 - Get Intelligence Report Details -->"
     [PSCustomObject]$body = @{
         search_terms = @(
             @{
@@ -379,11 +418,11 @@ If ($uemAppDetails.Total -le 0) {
     [PSCustomObject]$apiResponse = Invoke-WorkspaceOneApi -RootURL $IntelligenceRootURL -BaseURL 'v2/reports/search' -AccessToken $intelligenceAccessToken -Method 'Post' -Body $body
     [PSCustomObject]$targetReportDetails = $apiResponse.data.results | Where-Object {$_.name -eq $reportName}
     If (([array]$targetReportDetails).Count -ne 1) {
-        Add-Message -Message "The Report [$reportName] Not Exist. Create Report" -Color 'Yellow' -IsTempMessage $true
+        Add-Message -Message "The Report [$reportName] Not Exist yet. Create Report" -Color 'Yellow' -IsTempMessage $true
         ## Generate New Report
         [PSCustomObject]$body = @{
             name = $reportName
-            description = "Get All Device Details For Which adobeConnect is installed"
+            description = "Get All Device Details For Which $appName is installed"
             filter = " airwatch.application.app_id = $($appDetails[$confirmation].Id)  AND  airwatch.application.app_is_installed = true  AND  airwatch.device.device_enrollment_status IN ( 'Enrolled' )  AND  airwatch.device._event_created_time WITHIN 60 days "
             integration = "airwatch"
             entity = "application"
@@ -396,40 +435,53 @@ If ($uemAppDetails.Total -le 0) {
         $body = $body | ConvertTo-Json -Depth 3
         [PSCustomObject]$apiResponse = Invoke-WorkspaceOneApi -RootURL $IntelligenceRootURL -BaseURL 'v2/reports' -AccessToken $intelligenceAccessToken -Method 'Post' -Body $body
         [PSCustomObject]$targetReportDetails = $apiResponse.data
-        Add-Message -Message "The Report [$reportName] Is Created Successfully" -Color 'Green' -RemoveTempMessage
+        Add-Message -Message "The Report [$reportName] Is Created Successfully" -Color 'Green' -RemoveAllTempMessage
     } Else {
-        Add-Message -Message "The Report [$reportName] Already Exist" -Color 'Green' -RemoveTempMessage
+        Add-Message -Message "The Report [$reportName] Already Exist" -Color 'Green' -RemoveAllTempMessage
     }
 
 ################################################
 ## STEP 6: Verify If Targeted Report Is Sharing With Targeted Service Account
 ################################################
+    Add-Message -Message "Verify If Report [$reportName] Is Created By The Current Intelligence Service Account." -Color 'Yellow' -IsTempMessage $true
     [PSCustomObject]$apiResponse = Invoke-WorkspaceOneApi -RootURL $IntelligenceRootURL -BaseURL "v1/reports/$($targetReportDetails.id)/share/accounts" -AccessToken $intelligenceAccessToken
     [bool]$isReportNotSharedWithAccount = [string]::IsNullOrEmpty(($apiResponse.data.details.account_id | Where-Object {$_ -eq $($targetServiceAccountDetails.id)}))
 
-    If ($isReportNotSharedWithAccount -and ($targetReportDetails.created_by -ne $targetServiceAccountDetails.id)) {
-        # Targeted Report Is Not Shared With Targeted Service Account And Target Report Is Not Created By Targeted Service Account
-        $body = ConvertTo-Json -InputObject @(
-            @{
-                "user_descriptor" = @{
-                    "id" = $targetServiceAccountDetails.id
-                }
-                "account_access_level" = $intelligenceAccountAccessLevel
-            } ) -Depth 3
-            [PSCustomObject]$apiResponse = Invoke-WorkspaceOneApi -RootURL $IntelligenceRootURL -BaseURL "v1/reports/$($targetReportDetails.id)/share" -AccessToken $intelligenceAccessToken -Method 'Put' -Body $body
+    If ($targetReportDetails.created_by -ne $targetServiceAccountDetails.id) {
+        Add-Message -Message "Report [$reportName] Has Not Been Created By The Current Intelligence Service Account." -Color 'Yellow' -IsTempMessage $true
+        Add-Message -Message "Verify If Report [$reportName] Is Shared With The Current Intelligence Service Account." -Color 'Yellow' -IsTempMessage $true
+        If ($isReportNotSharedWithAccount) {
+            Add-Message -Message "The Report [$reportName] Is Not Shared With The Current Intelligence Service Account" -Color 'Yellow' -IsTempMessage $true
+            # Targeted Report Is Not Shared With Targeted Service Account And Target Report Is Not Created By Targeted Service Account
+            $body = ConvertTo-Json -InputObject @(
+                @{
+                    'user_descriptor' = @{
+                        'id' = $targetServiceAccountDetails.id
+                    }
+                    'account_access_level' = $intelligenceAccountAccessLevel
+                } ) -Depth 3
+                [PSCustomObject]$apiResponse = Invoke-WorkspaceOneApi -RootURL $IntelligenceRootURL -BaseURL "v1/reports/$($targetReportDetails.id)/share" -AccessToken $intelligenceAccessToken -Method 'Put' -Body $body
+                Add-Message -Message "The Report [$reportName] Is Successfully Shared With The Current Intelligence Service Account" -Color 'Green' -RemoveAllTempMessage
+        } Else {
+            Add-Message -Message "The Report [$reportName] Is Shared With The Current Intelligence Service Account" -Color 'Green' -RemoveAllTempMessage
+        }
+    } Else {
+        Add-Message -Message "The Report [$reportName] Has Been Created By The Current Intelligence Service Account" -Color 'Green' -RemoveAllTempMessage
     }
 
 ################################################
 ## STEP 7: Run The Report
 ################################################
+    Add-Message -Message "`n<-- Step 5 - Run Intelligence Report -->"
     [PSCustomObject]$apiResponse = Invoke-WorkspaceOneApi -RootURL $IntelligenceRootURL -BaseURL "v1/reports/$($targetReportDetails.id)/run" -AccessToken $intelligenceAccessToken -Method 'Post'
     [PSCustomObject]$targetReportRequestDetails = $apiResponse.data
+    Add-Message -Message "The Report [$reportName] Is Successfully Running" -Color 'Yellow' -IsTempMessage $true
 
 ################################################
 ## STEP 8: Tracking Report Generation State
 ################################################
     [bool]$isReportRun = $true
-    [bool]$SupportShortDelay = $true
+    [int]$SupportShortDelay = 5
     While ($isReportRun) {
         [bool]$continueToSearch = $true
         [int]$offsetValue = 0
@@ -461,23 +513,32 @@ If ($uemAppDetails.Total -le 0) {
                 $isReportRun = $false
             } Else {
                 # Report still running
-                Start-Sleep -Seconds 15
+                Add-Message -Message "The Report [$reportName] Is Still Running. Please Wait..." -Color 'Yellow' -IsTempMessage $true -RemoveAllTempMessage
+                Start-Sleep -Seconds 10
             }
         } Else {
-            If ($SupportShortDelay) {
-                $SupportShortDelay = $false
-                Start-Sleep -Seconds 30
+            If ($SupportShortDelay -ge 0) {
+                $SupportShortDelay--
+                Add-Message -Message "The Report [$reportName] Is Still Running. Please Wait..." -Color 'Yellow' -IsTempMessage $true -RemoveAllTempMessage
+                Start-Sleep -Seconds 5
             } Else {
                 Throw 'An Error Occured When Searching Report Completion Status. No Report Were Found'
             }
         }
     }
+    Add-Message -Message "The Report [$reportName] Is Generated. Tracking ID [$($targetReportTrackingDetails.id)]" -Color 'Green' -RemoveAllTempMessage
 
 ################################################
 ## STEP 9: Download Report
 ################################################
-[string]$reportLocationFile = $reportDirectoryLocation + '\' + $reportName + ".csv"
-[PSCustomObject]$apiResponse = Invoke-WorkspaceOneApi -RootURL $IntelligenceRootURL -BaseURL "v1/reports/tracking/$($targetReportTrackingDetails.id)/download" -AccessToken $intelligenceAccessToken -OutFile $reportLocationFile
+    Add-Message -Message "`n<-- Step 6 - Download CSV -->"
+    [string]$currentDate = Get-Date -Format 'dd_MM_yyyy_HH_mm'
+    [string]$csvFileName = $reportName + '_' + $currentDate + '.csv'
+    Add-Message -Message "The Report [$reportName] Will Be Downloaded Into [$reportDirectoryLocation] Repository And Will Be Named [$csvFileName]" -Color 'Yellow' -IsTempMessage $true -RemoveAllTempMessage
+
+    [string]$reportLocationFile = $reportDirectoryLocation + '\' + $reportName + $currentDate + ".csv"
+    [PSCustomObject]$apiResponse = Invoke-WorkspaceOneApi -RootURL $IntelligenceRootURL -BaseURL "v1/reports/tracking/$($targetReportTrackingDetails.id)/download" -AccessToken $intelligenceAccessToken -OutFile $reportLocationFile
+    Add-Message -Message "[$csvFileName] File Has Been Successfully Downloaded Into [$reportDirectoryLocation] Repository" -Color 'Green' -RemoveAllTempMessage
 }
 Add-Message -Message "Thank You For Using Workspace One App Report"
 Pause
